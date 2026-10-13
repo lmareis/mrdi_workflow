@@ -1,82 +1,274 @@
 ---
-bibliography: references.bib 
+bibliography: references.bib
 authors: # see https://quarto.org/docs/journals/authors.html for further options
-  - name: Firstname Lastname
-    orcid: 0000-0001-0002-0003
-    affiliation: "Your University"
-    country: CountryABC
+  - name: Leopold Mareis
+    orcid: 0000-0002-2624-6522
+    affiliation: "Technical University of Munich"
+    country: Germany
+  - name: Antony Della Vecchia
+    orcid: 0009-0008-1179-9862
+    affiliation: "TU Berlin"
+    country: Germany
+engine: julia
 ---
 
-# Your Notebook Name
+# From mrdi Files to Zenodo: Invariants of Phylogenetic Models
 
 | Resource | Information |
 |----|----|
-| Data DOI | [10.5281/zenodo.1234567](https://doi.org/10.5281/zenodo.17598199) |
-| Git + DOI | [Git](https://github.com/MaRDI4NFDI/GMCI_notebook_template/tree/683067d4f2c2d7e83f221e7bfbb0ae9b77aa93a5) [10.5281/zenodo.17598199](https://doi.org/10.5281/zenodo.17598199) |
-| Short Description | Short description of the main contributions and notebook structure |
+| Data | [algebraicphylogenetics.org](https://algebraicphylogenetics.org) (database version 0.3) |
+| Git | [Git](https://github.com/lmareis/mrdi_workflow) |
+| Short Description | This notebook demonstrates a reproducible research data workflow with the `.mrdi` file format: it (i) downloads group-based phylogenetic models from the algebraic phylogenetics database, (ii) computes invariants of their vanishing ideals in `OSCAR` that the database does not provide, and (iii) saves the results as `.mrdi` and publishes them on Zenodo. |
 
 : {.striped}
 
 ## Introduction
 
-Write an introduction to the analysis. Give references via @Mareis_Haug_Drton_2025. The bibtex entries are saved in `references.bib`.
+The `.mrdi` file format serializes mathematical objects together with their type information, so that a file loads directly into a computer algebra system as a ready-to-use object [@DellaVecchia2024mrdi]. The algebraic phylogenetics database [@smalltrees; @Bacher2025FAIR] uses this format to distribute phylogenetic models on small trees and networks, including their parametrizations and vanishing ideals, for the `Julia` package `OSCAR` [@OSCAR].
+
+In this notebook, we use such files as the starting point of a small computational study and close the loop to a published dataset. For every model of the Cavender–Farris–Neyman (CFN) and Jukes–Cantor (JC) type, we
+
+- load the model from its `.mrdi` file,
+- compute the degrees of a minimal generating set and the $h$-vector of the Hilbert series of its vanishing ideal,
+- save the results again as an `.mrdi` file, and
+- upload results, notebook and `Julia` environment to Zenodo, which assigns a DOI.
+
+## Setting up the Julia Environment
+
+The phylogenetic model type `SmallGroupBasedModel` is not yet part of an `OSCAR` release. The files `Project.toml` and `Manifest.toml` in this repository therefore pin the development branch of `OSCAR` that can read the database files, together with `HTTP` and `JSON3` for the web requests. The first instantiation downloads and precompiles all packages, which takes several minutes.
+
+```{julia}
+#| output: false
+import Pkg
+Pkg.activate(".")
+Pkg.instantiate()
+
+using Oscar # computer algebra and .mrdi (de)serialization
+using HTTP  # download from the database, requests to Zenodo
+using JSON3 # read and write Zenodo's JSON messages
+```
+
+The following settings collect everything that a reader may want to change. The Zenodo access token is read from a file outside the repository, so it is never committed or uploaded. Without this file, the notebook performs all computations and skips the upload.
+
+```{julia}
+#| output: false
+const SITE       = "https://algebraicphylogenetics.org"
+const MODELS     = ["CFN", "JC"]                    # "K2P" and "K3P" are much slower
+const ZENODO     = "https://sandbox.zenodo.org/api" # real Zenodo: https://zenodo.org/api
+const TOKEN_FILE = "../all_token.txt"               # needs deposit:write and deposit:actions
+const OUTFILE    = "generator_degrees.mrdi"
+const CSVFILE    = "generator_degrees.csv"
+```
 
 ## Loading the Data
 
-Create an R environment and save it in the file `renv.lock` with `renv::init()` and `renv::snapshot()`. For detailed information, see the [renv website](https://rstudio.github.io/renv/articles/renv.html).
-Load the R environment with our standardized loading function.
-```{r, message=TRUE, warning=TRUE, eval=FALSE}
-# activate the chunk with eval=TRUE
-source("../../load_environment.R")
+The database lists every model on its landing page and stores the corresponding `.mrdi` files under a fixed path. We collect all model identifiers of the selected types from the page, download the missing files into the folder `data/` and load them with `OSCAR`'s generic `load` function.
+
+```{julia}
+index = String(HTTP.get(SITE).body)
+pattern = r"SmallGroupBasedModel_([\d-]+-([A-Z0-9]+))\.mrdi"
+ids = sort(unique(String(m[1]) for m in eachmatch(pattern, index) if m[2] in MODELS))
+
+mkpath("data")
+models = map(ids) do id
+  file = "SmallGroupBasedModel_$id.mrdi"
+  path = joinpath("data", file)
+  url  = "$SITE/static/data/SmallGroupBasedModels/$file"
+  isfile(path) || write(path, HTTP.get(url).body)
+  load(path)
+end
+ids
 ```
 
-Shortly describe the packages that were responsible for the R environment.
-```{r, message=FALSE, eval=FALSE}
-# Used packages, only for information.
-library(package1) # function of package1
-library(package2) # function of package2
+Each identifier encodes the tree, starting with its number of leaves, followed by the model type. The database version 0.3 contains the following six trees:
+
+::: {layout-ncol="6"}
+![3 leaves, star (binary)](https://algebraicphylogenetics.org/static/tex/image_3-0-0-0-0-0-0.svg)
+
+![4 leaves, star](https://algebraicphylogenetics.org/static/tex/image_4-0-0-0-0-0-0.svg)
+
+![4 leaves, binary](https://algebraicphylogenetics.org/static/tex/image_4-0-0-0-0-1-0.svg)
+
+![5 leaves, star](https://algebraicphylogenetics.org/static/tex/image_5-0-0-0-0-0-0.svg)
+
+![5 leaves, non-binary](https://algebraicphylogenetics.org/static/tex/image_5-0-0-0-0-1-0.svg)
+
+![5 leaves, binary](https://algebraicphylogenetics.org/static/tex/image_5-0-0-0-0-2-0.svg)
+:::
+
+## Group-Based Models and their Vanishing Ideals
+
+A phylogenetic model describes how a DNA site evolves along the edges of a tree: each edge carries a transition matrix between the states, and the joint distribution of the states at the $n$ leaves is a polynomial function of the matrix entries. In *group-based models*, the states are identified with the elements of an abelian group $G$, which is $\mathbb{Z}_2$ for the two-state CFN model and $\mathbb{Z}_2 \times \mathbb{Z}_2$ for the four-state JC model on the nucleotides. After a discrete Fourier transform, the parametrization becomes monomial in the so-called *Fourier coordinates* $q_{g_1 \dots g_n}$, indexed by group elements at the leaves. The *vanishing ideal* $I$ collects all polynomial relations among the Fourier coordinates that hold for every choice of parameters. Its elements are known as *phylogenetic invariants*, and since the parametrization is monomial, $I$ is a toric ideal generated by binomials [@SturmfelsSullivant2005].
+
+We inspect the CFN model on the binary tree with four leaves.
+
+```{julia}
+model = models[findfirst(==("4-0-0-0-0-1-0-CFN"), ids)]
+vanishing_ideal(model)
 ```
 
-Load the data. Prefereably from Zenodo:
-```{r, message = FALSE, warning=FALSE, eval=FALSE}
-# Load Data
-zenodo <- ZenodoManager$new(logger = NULL)
-record <- zenodo$getRecordByDOI("10.5281/zenodo.1234567")
-files <- record$listFiles(pretty = TRUE)
-alarm <- as.matrix(read.csv(files[1, 4]))
+Both generators are quadratic binomials in eight Fourier coordinates. The database further records the dimension and the degree of the model.
+
+```{julia}
+(model.dimension, model.degree)
 ```
 
-## Analysis
+## Computing New Invariants
 
-Write some educational analysis text and carry out the analysis.
+The database stores a generating set of the vanishing ideal, but this set is in general not minimal and its degrees depend on how it was computed. We compute two invariants of the ideal that do not depend on such choices.
 
-```{r}
-mean(c(1 + 2, 3 * 4))
+**Degrees of minimal generators.** Every minimal generating set of a homogeneous ideal has the same number of generators in each degree. The largest such degree tells us which polynomials suffice to describe the model. @SturmfelsSullivant2005 proved that the ideals of the CFN model on trees are generated in degree two and conjectured that the degree of a group-based model is at most $|G|$ in general.
+
+**The $h$-vector.** The Hilbert series of the coordinate ring $\mathbb{Q}[q]/I$ counts the linearly independent polynomials of each degree modulo $I$. It is a rational function
+$$H(t) = \frac{h_0 + h_1 t + \dots + h_s t^s}{(1-t)^d},$$
+where $d$ is the Krull dimension and $h(1) = h_0 + \dots + h_s$ is the degree of the model. This yields a free consistency check against the database. The *$h$-vector* $(h_0, \dots, h_s)$ carries further structural information: for Cohen–Macaulay domains, it is palindromic if and only if the ring is Gorenstein [@Stanley1978]. @BuczynskaWisniewski2007 showed that binary CFN trees give Gorenstein rings.
+
+The function `analyse` computes both invariants. Since the database stores the ideal in an ungraded polynomial ring, we first pass to the standard grading, in which every Fourier coordinate has degree one.
+
+```{julia}
+#| output: false
+function analyse(model)
+  I = vanishing_ideal(model)
+  S, _ = grade(base_ring(I))
+  J = ideal(S, S.(gens(I)))
+
+  # the Hilbert series has to be computed before the minimal generators,
+  # the reverse order fails in the current development version of OSCAR
+  A, _ = quo(S, J)
+  h = Int.(collect(coefficients(hilbert_series_reduced(A)[1])))
+  @assert (dim(A), sum(h)) == (model.dimension, model.degree) "mismatch with the database"
+  degs = degree.(Int, minimal_generating_set(J))
+
+  return Dict{String, Any}(
+    "dimension"             => model.dimension,
+    "degree"                => model.degree,
+    "n_stored_generators"   => ngens(I),
+    "n_min_generators"      => length(degs),
+    "max_generator_degree"  => maximum(degs; init = 0),
+    "generators_per_degree" => [count(==(k), degs) for k in 1:maximum(degs; init = 0)],
+    "h_vector"              => h,
+    "h_vector_palindromic"  => h == reverse(h))
+end
 ```
 
-Analysis in other languages, e.g., Python are welcome as well. 
-```{python}
--1 / -2
+```{julia}
+analyse(model)
 ```
 
-```{r, message=FALSE, warning=FALSE, eval=FALSE}
-# activate the chunk with eval=TRUE
-source("../../close_environment.R")
+The two stored generators are already minimal. The $h$-vector $(1, 2, 1)$ is palindromic and sums to the degree four of the model. We now analyse all models.
+
+```{julia}
+results = @time Dict(id => analyse(m) for (id, m) in zip(ids, models));
 ```
+
+```{julia}
+#| echo: false
+#| output: asis
+trees = Dict("3-0-0-0-0-0-0" => "3 leaves, star (binary)",  "4-0-0-0-0-0-0" => "4 leaves, star",
+             "4-0-0-0-0-1-0" => "4 leaves, binary", "5-0-0-0-0-0-0" => "5 leaves, star",
+             "5-0-0-0-0-1-0" => "5 leaves, non-binary", "5-0-0-0-0-2-0" => "5 leaves, binary")
+fmt(x) = x isa Vector ? "(" * join(x, ", ") * ")" : x isa Bool ? (x ? "yes" : "no") : string(x)
+cols = ["dimension", "degree", "n_stored_generators", "n_min_generators",
+        "generators_per_degree", "h_vector", "h_vector_palindromic"]
+println("| tree | model | dim. | deg. | stored gens. | minimal gens. | minimal gens. per degree | ",
+        "*h*-vector | palindromic |")
+println("|", repeat("----|", length(cols) + 2))
+for id in ids
+  tree, type = rsplit(id, "-"; limit = 2)
+  println("| ", get(trees, tree, tree), " | ", type, " | ",
+          join((fmt(results[id][c]) for c in cols), " | "), " |")
+end
+println("\n: Invariants of the vanishing ideals; dimension and degree agree with the database.",
+        " {.striped}")
+```
+
+The table reveals three observations. First, the stored generating sets are frequently far from minimal: for the JC model on the non-binary tree with five leaves, 272 of 360 stored generators suffice, and the stored set contains polynomials up to degree five although degree three is enough. Second, all CFN ideals are generated in degree two, in line with @SturmfelsSullivant2005, and all JC ideals in degree at most three, below the conjectured bound $|\mathbb{Z}_2 \times \mathbb{Z}_2| = 4$. Third, the $h$-vector is palindromic for every binary tree, in line with @BuczynskaWisniewski2007 for the CFN model, while among the non-binary trees only the CFN model on the star tree with four leaves has a palindromic $h$-vector.
+
+## Saving the Results as mrdi
+
+The function `save` serializes the results, here a dictionary of dictionaries, into an `.mrdi` file. Loading the file returns an equal object, which any `OSCAR` user can process further without parsing. A CSV file offers the same table for other software.
+
+```{julia}
+save(OUTFILE, results)
+load(OUTFILE) == results
+```
+
+```{julia}
+#| output: false
+cols = ["dimension", "degree", "n_stored_generators", "n_min_generators",
+        "max_generator_degree", "generators_per_degree", "h_vector", "h_vector_palindromic"]
+open(CSVFILE, "w") do io
+  println(io, join(["model"; cols], ";"))
+  foreach(id -> println(io, join([id; [string(results[id][c]) for c in cols]], ";")), ids)
+end
+```
+
+## Publishing on Zenodo
+
+Zenodo's REST API publishes a record in four steps: we create an empty deposition, upload the files into its storage bucket, attach the metadata and publish. Next to the results, we upload this notebook and the `Julia` environment so that the computation can be reproduced exactly. The metadata reference the database as the source of the data.
+
+```{julia}
+#| output: false
+metadata = Dict(
+  "title"       => "Generator degrees and h-vectors of small group-based phylogenetic models",
+  "upload_type" => "dataset",
+  "description" => """
+    <p>Degrees of minimal generators and h-vectors of the vanishing ideals
+    (in Fourier coordinates) of the $(join(MODELS, " and ")) models on all trees of the algebraic phylogenetics database
+    (algebraicphylogenetics.org, version 0.3).</p>
+    <p>The results are stored in <code>$OUTFILE</code> (load with <code>Oscar.load</code>) and
+    <code>$CSVFILE</code>. They were computed with OSCAR $(pkgversion(Oscar))
+    and Julia $(VERSION) by the attached notebook.</p>""",
+  "creators"    => [Dict("name" => "Mareis, Leopold", "orcid" => "0000-0002-2624-6522"),
+                    Dict("name" => "Della Vecchia, Antony", "orcid" => "0009-0008-1179-9862")],
+  "license"     => "cc-by-4.0",
+  "keywords"    => ["algebraic phylogenetics", "toric ideals", "group-based models",
+                    "OSCAR", "mrdi"],
+  "related_identifiers" => [Dict("identifier" => SITE, "relation" => "isDerivedFrom",
+                                 "resource_type" => "dataset")])
+```
+
+```{julia}
+if isfile(TOKEN_FILE)
+  auth = ["Authorization" => "Bearer " * strip(read(TOKEN_FILE, String))]
+  json = [auth; "Content-Type" => "application/json"]
+  bin  = [auth; "Content-Type" => "application/octet-stream"]
+
+  dep = JSON3.read(HTTP.post("$ZENODO/deposit/depositions", json, "{}").body)
+  for file in [OUTFILE, CSVFILE, "notebook.qmd", "Project.toml", "Manifest.toml"]
+    HTTP.put("$(dep.links.bucket)/$file", bin, read(file))
+  end
+  HTTP.put(dep.links.self, json, JSON3.write(Dict("metadata" => metadata)))
+  record = JSON3.read(HTTP.post(dep.links.publish, auth).body)
+
+  println("Published ", replace(ZENODO, "/api" => ""), "/records/", record.id,
+          " with DOI ", record.doi)
+else
+  println("No token found at $TOKEN_FILE, the upload is skipped.")
+end
+```
+
+On the sandbox, records are only for testing and their DOIs do not resolve. Once the workflow is final, setting `ZENODO` to the real Zenodo API and using a token from zenodo.org publishes a permanent record. Publishing is irreversible; later corrections become new versions of the record under a common concept DOI.
 
 ## Citing this Notebook {.unnumbered}
 
-Please cite XYZ with the following bib item.
+Please cite our community with the following bib item.
 
 ``` bibtex
-@article{XYZ
+@article{Mareis_Haug_Drton_2025,
+title={MaRDI's Zenodo Community for Graphical Modeling and Causal Inference},
+volume={2},
+journal={Proceedings of the Conference on Research Data Infrastructure},
+author={Mareis, Leopold and Haug, Stephan and Drton, Mathias},
+year={2025},
+month={Sep.}
 }
 ```
 
-When using the ABC dataset, please give credit to the original author: Author year.
+When using the phylogenetic models, please give credit to the algebraic phylogenetics database: @smalltrees.
 
 ## Additional Information {.unnumbered}
 
-**License Information:** Please follow the above DOI for license information of data and code.
+**License Information:** Please follow the above links for license information of data and code.
 
-**Contact:** If you have suggestions, feel free to [create an issue](https://github.com/username/git-project/issues) or contact the authors (your@mail.address).
+**Contact:** If you have suggestions, feel free to [create an issue](https://github.com/lmareis/mrdi_workflow/issues) or contact the authors.

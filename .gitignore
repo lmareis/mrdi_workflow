@@ -13,3 +13,5 @@ renv/python/
 
 *.tex
 *.pdf
+data/
+generator_degrees.*
