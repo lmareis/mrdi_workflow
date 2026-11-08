@@ -17,7 +17,7 @@ engine: julia
 | Resource | Information |
 |----|----|
 | Data | [algebraicphylogenetics.org](https://algebraicphylogenetics.org) (database version 0.3) |
-| Git + DOI | [Git](https://github.com/lmareis/mrdi_workflow) \quad [![DOI](https://zenodo.org/badge/1416994573.svg)](https://doi.org/10.5281/zenodo.24053350) |
+| Git + DOI | [Git](https://github.com/lmareis/mrdi_workflow) \quad   [![DOI](https://zenodo.org/badge/1416994573.svg)](https://doi.org/10.5281/zenodo.24053350) |
 | Short Description | This notebook demonstrates a reproducible research data workflow with the `.mrdi` file format: it (i) downloads group-based phylogenetic models from the algebraic phylogenetics database, (ii) computes invariants of their vanishing ideals in `OSCAR` that the database does not provide, and (iii) saves the results as `.mrdi` and publishes them on Zenodo. |
 
 : {.striped}
